@@ -1,4 +1,5 @@
 import discord
+from discord.ext import tasks
 
 from dotenv import load_dotenv
 import sys
@@ -14,13 +15,16 @@ import requests
 
 if sys.platform == "linux":
     from inky.auto import auto
-
     display = auto()
 else:
     print("Not running on Linux. Inky display integration disabled.")
     display = None
 
 import gcal
+
+# Load config
+with open("settings.cfg") as settings_file:
+    config = json.load(settings_file)
 
 # Devmode parsing
 parser = argparse.ArgumentParser()
@@ -33,6 +37,8 @@ devmode = args.dev
 intents = discord.Intents.default()
 intents.presences = True
 intents.members = True
+
+cached_after = None
 
 load_dotenv()
 token = os.getenv("DISCORD_TOKEN")
@@ -55,7 +61,7 @@ def render(img: Image.Image, display):
 
 async def draw_screen(after: Optional[discord.Member]):
     # Discord stuff
-    img = Image.new("RGB", (600, 448), "white")
+    img = Image.new("RGBA", (600, 448), "white")
     draw = ImageDraw.Draw(img)
 
     if after is not None:
@@ -108,6 +114,17 @@ async def draw_screen(after: Optional[discord.Member]):
                         break
 
             draw.text((110, 398), game_title_text, "white", anchor="lm")
+
+    else:  # after is None
+        print("Game not found")
+        draw.rectangle([0, 348, 600, 448], fill="gray")
+        draw.text(
+            (300, 398),
+            "No game active",
+            "white",
+            ImageFont.load_default(size=70),
+            anchor="mm",
+        )
 
     events = gcal.get_sorted_events()
 
@@ -164,11 +181,20 @@ async def draw_screen(after: Optional[discord.Member]):
 @client.event
 async def on_ready():
     print(f"We have logged in as {client.user}")
+    refresh.start()
 
 
 @client.event
 async def on_presence_update(before: discord.Member, after: discord.Member):
-    await draw_screen(after)
+    if after.name == config["user"]:
+        global cached_after
+        cached_after = after
+
+
+@tasks.loop(minutes=10)
+async def refresh():
+    global cached_after
+    await draw_screen(cached_after)
 
 
 client.run(token)
